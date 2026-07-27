@@ -3,6 +3,7 @@ import http from 'http';
 import WebSocket from 'ws';
 import bodyParser from 'body-parser';
 import cors from 'cors';
+import { prisma } from '../src/lib/prisma';
 
 const app = express();
 app.use(cors());
@@ -26,10 +27,26 @@ wss.on('connection', (ws) => {
   ws.on('close', () => clients.delete(ws));
 });
 
-app.post('/api/locations', (req, res) => {
+app.post('/api/locations', async (req, res) => {
   const payload = req.body as TechLocation;
-  if (!payload?.id || !payload?.lat || !payload?.lng) return res.status(400).send('missing fields');
-  const now = new Date().toISOString(); payload.updatedAt = now; currentLocations[payload.id] = payload; broadcast({ type: 'location', payload }); return res.json({ ok: true });
+  if (!payload?.id || typeof payload?.lat !== 'number' || typeof payload?.lng !== 'number') return res.status(400).send('missing fields');
+  const now = new Date().toISOString();
+  payload.updatedAt = now;
+  currentLocations[payload.id] = payload;
+
+  // Persist to DB (upsert)
+  try {
+    await prisma.technicianLocation.upsert({
+      where: { id: payload.id },
+      update: { lat: payload.lat, lng: payload.lng, workOrderId: payload.workOrderId ?? null, updatedAt: new Date() },
+      create: { id: payload.id, technicianId: payload.id, lat: payload.lat, lng: payload.lng, workOrderId: payload.workOrderId ?? null },
+    });
+  } catch (err) {
+    console.warn('Failed to persist location', err);
+  }
+
+  broadcast({ type: 'location', payload });
+  return res.json({ ok: true });
 });
 
 const PORT = process.env.REALTIME_PORT ? Number(process.env.REALTIME_PORT) : 4000;

@@ -1,0 +1,9 @@
+model TechnicianLocation {
+  id           String   @id @default(uuid()) @db.Uuid
+  technicianId String   @db.Uuid
+  lat          Float
+  lng          Float
+  workOrderId  String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}
