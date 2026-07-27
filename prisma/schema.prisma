@@ -1,0 +1,276 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  admin
+  dispatcher
+  supervisor
+  technician
+}
+
+enum EquipmentStatus {
+  Available
+  InService
+  InRepair
+  OutOfService
+  Retired
+}
+
+enum WorkOrderType {
+  Delivery
+  Setup
+  RecurringCleaning
+  Maintenance
+  Relocation
+  SwapOut
+  Pickup
+}
+
+enum WorkOrderStatus {
+  Pending
+  Assigned
+  InProgress
+  Completed
+  Approved
+  Cancelled
+}
+
+enum RouteStatus {
+  Planned
+  InProgress
+  Completed
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  email        String?  @unique
+  emailVerified DateTime?
+  passwordHash String?  // credentials provider
+  role         UserRole
+  phone        String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accounts     Account[]
+  sessions     Session[]
+  assignedWorkOrders WorkOrder[] @relation("TechnicianWorkOrders")
+  serviceEntries ServiceEntry[] @relation("TechnicianEntries")
+  routes       Route[] @relation("TechnicianRoutes")
+  auditLogs    AuditLog[] @relation("PerformedBy")
+}
+
+model Account {
+  id                 String  @id @default(uuid()) @db.Uuid
+  userId             String  @db.Uuid
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?
+  access_token       String?
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  sessionToken String   @unique
+  userId       String   @db.Uuid
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Customer {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  locations  ServiceLocation[]
+  workOrders WorkOrder[]
+  equipment  Equipment[]  @relation("CustomerEquipment")
+}
+
+model ServiceLocation {
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @db.Uuid
+  name       String
+  address    String
+  lat        Float
+  lng        Float
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  customer   Customer    @relation(fields: [customerId], references: [id])
+  workOrders WorkOrder[]
+}
+
+model Equipment {
+  id                String          @id                    // domain id: e.g. "TO-0187"
+  model             String
+  serialNumber      String?
+  currentCustomerId String?          @db.Uuid
+  lat               Float?
+  lng               Float?
+  status            EquipmentStatus @default(Available)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  currentCustomer   Customer?              @relation("CustomerEquipment", fields: [currentCustomerId], references: [id])
+  workOrders        WorkOrder[]
+  monthlyRecords    MonthlyServiceRecord[]
+}
+
+model WorkOrder {
+  id                   String         @id @default(uuid()) @db.Uuid
+  type                 WorkOrderType
+  equipmentId          String?
+  customerId           String         @db.Uuid
+  locationId           String?        @db.Uuid
+  assignedTechnicianId String?        @db.Uuid
+  status               WorkOrderStatus @default(Pending)
+  scheduledDate        DateTime
+  completedAt          DateTime?
+  notes                String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  equipment            Equipment?     @relation(fields: [equipmentId], references: [id])
+  customer             Customer       @relation(fields: [customerId], references: [id])
+  location             ServiceLocation? @relation(fields: [locationId], references: [id])
+  assignedTechnician   User?          @relation("TechnicianWorkOrders", fields: [assignedTechnicianId], references: [id])
+  serviceForm          ServiceForm?
+  routeWorkOrders      RouteWorkOrder[]
+}
+
+model ServiceForm {
+  id                  String   @id @default(uuid()) @db.Uuid
+  workOrderId         String   @unique @db.Uuid
+  arrivalTime         DateTime
+  departureTime       DateTime
+  lat                 Float
+  lng                 Float
+  fieldNotes          String?
+  customerSignature   String?
+  technicianSignature String
+  refusalReason       String?
+  createdAt           DateTime @default(now())
+  syncedAt            DateTime?
+
+  workOrder           WorkOrder  @relation(fields: [workOrderId], references: [id])
+  photos              ServiceFormPhoto[]
+}
+
+model ServiceFormPhoto {
+  id            String       @id @default(uuid()) @db.Uuid
+  serviceFormId String       @db.Uuid
+  url           String
+  mimeType      String?
+  createdAt     DateTime     @default(now())
+
+  serviceForm   ServiceForm  @relation(fields: [serviceFormId], references: [id])
+}
+
+model MonthlyServiceRecord {
+  id          String    @id @default(uuid()) @db.Uuid
+  equipmentId String
+  month       String    // "YYYY-MM"
+  createdAt   DateTime  @default(now())
+
+  equipment   Equipment @relation(fields: [equipmentId], references: [id])
+  entries     ServiceEntry[]
+
+  @@unique([equipmentId, month])
+  @@index([equipmentId])
+}
+
+model ServiceEntry {
+  id           String                 @id @default(uuid()) @db.Uuid
+  recordId     String                 @db.Uuid
+  type         WorkOrderType
+  date         DateTime
+  technicianId String?                @db.Uuid
+  notes        String?
+  createdAt    DateTime               @default(now())
+
+  record       MonthlyServiceRecord   @relation(fields: [recordId], references: [id])
+  technician   User?                  @relation("TechnicianEntries", fields: [technicianId], references: [id])
+  photos       ServiceEntryPhoto[]
+}
+
+model ServiceEntryPhoto {
+  id             String        @id @default(uuid()) @db.Uuid
+  serviceEntryId String        @db.Uuid
+  url            String
+  mimeType       String?
+  createdAt      DateTime      @default(now())
+
+  serviceEntry   ServiceEntry  @relation(fields: [serviceEntryId], references: [id])
+}
+
+model Route {
+  id         String    @id @default(uuid()) @db.Uuid
+  date       DateTime
+  technicianId String  @db.Uuid
+  status     RouteStatus @default(Planned)
+  startedAt  DateTime?
+  completedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  technician   User            @relation("TechnicianRoutes", fields: [technicianId], references: [id])
+  workOrders   RouteWorkOrder[]
+  @@index([technicianId, date])
+}
+
+model RouteWorkOrder {
+  routeId     String   @db.Uuid
+  workOrderId String   @db.Uuid
+  position    Int      @default(0)
+
+  route       Route    @relation(fields: [routeId], references: [id])
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id])
+
+  @@id([routeId, workOrderId])
+  @@index([routeId, position])
+}
+
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  entityType    String
+  entityId      String
+  action        String
+  performedById String?  @db.Uuid
+  payload       Json?
+  createdAt     DateTime @default(now())
+
+  performedBy   User?    @relation("PerformedBy", fields: [performedById], references: [id])
+  @@index([entityType, entityId])
+}
